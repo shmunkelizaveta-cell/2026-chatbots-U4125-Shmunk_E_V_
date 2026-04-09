@@ -92,9 +92,49 @@ logger = logging.getLogger("telegram_news_bot")
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "").strip()
-FAVORITES_FILE = os.getenv("FAVORITES_FILE", "favorites.json").strip()
+def _get_env(*names: str, default: str = "") -> str:
+    """
+    Возвращает значение первой найденной переменной окружения из списка names.
+    Удобно для деплоя, где имена переменных могут отличаться.
+    """
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return default
+
+
+def resolve_bot_token() -> str:
+    """
+    Токен бота для Railway/Render и локального .env.
+    Поддерживаются разные имена переменных (часто в UI пишут не то имя).
+    """
+    t = _get_env(
+        "BOT_TOKEN",
+        "TELEGRAM_BOT_TOKEN",
+        "TG_BOT_TOKEN",
+        "TELEGRAM_TOKEN",
+        "TG_TOKEN",
+    )
+    if t:
+        return t
+    # Иногда задают просто TOKEN — принимаем только если похоже на токен Telegram
+    generic = os.getenv("TOKEN", "")
+    if generic:
+        generic = str(generic).strip()
+        if ":" in generic and generic.split(":", 1)[0].isdigit() and len(generic) > 20:
+            return generic
+    return ""
+
+
+# Railway/Render/Heroku обычно подают переменные окружения напрямую.
+# .env нужен только локально, поэтому поддержим алиасы и не будем “падать” из‑за названия переменной.
+BOT_TOKEN = resolve_bot_token()
+NEWSAPI_KEY = _get_env("NEWSAPI_KEY", "NEWS_API_KEY")
+FAVORITES_FILE = _get_env("FAVORITES_FILE", default="favorites.json")
+
+# Метка сборки — в логах Railway должна появиться после redeploy (проверка, что залит новый код)
+DEPLOY_BUILD = "railway-env-2026-04-09b"
 
 NEWSAPI_TOP_URL = "https://newsapi.org/v2/top-headlines"
 NEWSAPI_EVERYTHING_URL = "https://newsapi.org/v2/everything"
@@ -1274,12 +1314,29 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def main() -> None:
     setup_logging("bot.log")
-    logger.info("Starting bot…")
+    logger.info("Starting bot… build=%s", DEPLOY_BUILD)
 
-    if not BOT_TOKEN:
-        raise RuntimeError("Не найден BOT_TOKEN. Укажите токен в .env.")
+    # Диагностика для деплоя (Railway): какие имена переменных реально видит процесс
+    logger.info(
+        "Env present: BOT_TOKEN=%s TELEGRAM_BOT_TOKEN=%s TG_TOKEN=%s TOKEN=%s NEWSAPI_KEY=%s NEWS_API_KEY=%s",
+        bool(os.getenv("BOT_TOKEN")),
+        bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+        bool(os.getenv("TG_TOKEN")),
+        bool(os.getenv("TOKEN")),
+        bool(os.getenv("NEWSAPI_KEY")),
+        bool(os.getenv("NEWS_API_KEY")),
+    )
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Перечитываем токен при старте (после load_dotenv в начале файла)
+    token = resolve_bot_token()
+    if not token:
+        raise RuntimeError(
+            "Не найден токен бота. В Railway → ваш сервис → Variables добавьте переменную "
+            "BOT_TOKEN (или TELEGRAM_BOT_TOKEN) со значением токена от @BotFather, "
+            "сохраните и сделайте Redeploy. Локальный .env на Railway в контейнер не попадает, если вы его не коммитите."
+        )
+
+    app = Application.builder().token(token).build()
 
     # Команды (сохранены)
     app.add_handler(CommandHandler("start", start))

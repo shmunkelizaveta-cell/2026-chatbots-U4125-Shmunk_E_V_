@@ -1,3 +1,9 @@
+.DS_Store
+.env
+__pycache__/
+*.pyc
+*.log
+favorites.json
 
 __pycache__/
 *.pyc
